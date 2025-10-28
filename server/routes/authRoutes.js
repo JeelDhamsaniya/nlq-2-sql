@@ -1,7 +1,19 @@
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
-const { generateToken } = require("../middleware/auth");
+const { generateToken, authenticate } = require("../middleware/auth");
+
+// Helper function to set cookie options
+const getCookieOptions = () => {
+  return {
+    httpOnly: true, // Prevents JavaScript access to the cookie
+    secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // CSRF protection - 'none' for cross-site in production, 'lax' for local dev
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+    path: "/", // Cookie available for all routes
+    signed: true, // Sign cookies to prevent tampering
+  };
+};
 
 // Register new user
 router.post("/register", async (req, res) => {
@@ -51,6 +63,9 @@ router.post("/register", async (req, res) => {
     // Generate token
     const token = generateToken(user._id, user.role);
 
+    // Set HTTP-only cookie
+    res.cookie("token", token, getCookieOptions());
+
     res.status(201).json({
       success: true,
       message: "User registered successfully",
@@ -60,7 +75,6 @@ router.post("/register", async (req, res) => {
         email: user.email,
         role: user.role,
       },
-      token,
     });
   } catch (error) {
     console.error("Registration error:", error);
@@ -108,6 +122,9 @@ router.post("/login", async (req, res) => {
     // Generate token
     const token = generateToken(user._id, user.role);
 
+    // Set HTTP-only cookie
+    res.cookie("token", token, getCookieOptions());
+
     res.json({
       success: true,
       message: "Login successful",
@@ -117,7 +134,6 @@ router.post("/login", async (req, res) => {
         email: user.email,
         role: user.role,
       },
-      token,
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -129,24 +145,10 @@ router.post("/login", async (req, res) => {
 });
 
 // Get current user info (requires authentication)
-router.get("/me", async (req, res) => {
+router.get("/me", authenticate, async (req, res) => {
   try {
-    // Extract token
-    const token = req.header("Authorization")?.replace("Bearer ", "");
-
-    if (!token) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
-
-    const jwt = require("jsonwebtoken");
-    const { JWT_SECRET } = require("../middleware/auth");
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.userId).select("-password");
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
+    // User is already attached by authenticate middleware
+    const user = req.user;
 
     res.json({
       success: true,
@@ -168,24 +170,10 @@ router.get("/me", async (req, res) => {
 });
 
 // Get user permissions
-router.get("/permissions", async (req, res) => {
+router.get("/permissions", authenticate, async (req, res) => {
   try {
-    const token = req.header("Authorization")?.replace("Bearer ", "");
-
-    if (!token) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
-
-    const jwt = require("jsonwebtoken");
-    const { JWT_SECRET } = require("../middleware/auth");
+    const user = req.user;
     const { getRolePermissions } = require("../middleware/roleValidator");
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.userId);
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
 
     const permissions = getRolePermissions(user.role);
 
@@ -197,6 +185,30 @@ router.get("/permissions", async (req, res) => {
   } catch (error) {
     res.status(401).json({
       error: "Invalid token",
+      details: error.message,
+    });
+  }
+});
+
+// Logout user (clear cookie)
+router.post("/logout", (req, res) => {
+  try {
+    // Clear the token cookie (must match cookie options used when setting)
+    res.clearCookie("token", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/",
+      signed: true,
+    });
+
+    res.json({
+      success: true,
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Logout failed",
       details: error.message,
     });
   }

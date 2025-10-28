@@ -1,5 +1,8 @@
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const pool = require("./config/db");
 const connectMongoDB = require("./config/mongodb");
 const queryRoutes = require("./routes/queryRoutes");
@@ -7,6 +10,32 @@ const authRoutes = require("./routes/authRoutes");
 require("dotenv").config();
 
 const app = express();
+
+// Security headers
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // Disable if using inline scripts
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// Rate limiting for authentication endpoints
+const authLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 15 minutes
+  max: 5, // Max 5 requests per window
+  message: "Too many authentication attempts, please try again later.",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Cookie parser middleware with signing secret (must be before routes)
+const COOKIE_SECRET = process.env.COOKIE_SECRET || process.env.JWT_SECRET;
+if (!COOKIE_SECRET) {
+  console.error(
+    "WARNING: COOKIE_SECRET not set, cookies will not be signed!"
+  );
+}
+app.use(cookieParser(COOKIE_SECRET));
 
 // Middleware - Manual CORS setup for Vercel
 app.use((req, res, next) => {
@@ -16,17 +45,18 @@ app.use((req, res, next) => {
     "http://localhost:5000",
     "http://localhost:5173",
     "https://nlq-2-sql-fronted.vercel.app",
+    "https://nlq-frontend.vercel.app"
   ];
 
-  // Allow any vercel.app domain or localhost
-  if (
-    !origin ||
-    origin.endsWith(".vercel.app") ||
-    allowedOrigins.includes(origin)
-  ) {
+  // Check if origin is in allowed list
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin || "*");
+  } else if (process.env.NODE_ENV !== "production") {
+    // In development, allow all origins
     res.setHeader("Access-Control-Allow-Origin", origin || "*");
   } else {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // In production, reject unknown origins
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigins[0]);
   }
 
   res.setHeader(
@@ -79,7 +109,9 @@ app.get("/health", (req, res) => {
   res.json({ msg: "server is running!!" });
 });
 
-// Routes
+// Routes with rate limiting on auth endpoints
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/register", authLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api", queryRoutes);
 

@@ -2,6 +2,7 @@ import React, { createContext, useState, useContext, useEffect } from "react";
 import {
   login as apiLogin,
   register as apiRegister,
+  logout as apiLogout,
   getCurrentUser,
 } from "../services/api";
 
@@ -17,16 +18,12 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem("token"));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (token) {
-      loadUser();
-    } else {
-      setLoading(false);
-    }
-  }, [token]);
+    // Try to load user on mount (cookie will be sent automatically)
+    loadUser();
+  }, []);
 
   const loadUser = async () => {
     try {
@@ -34,7 +31,8 @@ export const AuthProvider = ({ children }) => {
       setUser(userData.user);
     } catch (error) {
       console.error("Failed to load user:", error);
-      logout();
+      // Don't logout here, just set user to null
+      setUser(null);
     } finally {
       setLoading(false);
     }
@@ -46,9 +44,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem("library_tables_cache");
 
       const response = await apiLogin(email, password);
-      setToken(response.token);
       setUser(response.user);
-      localStorage.setItem("token", response.token);
       return { success: true };
     } catch (error) {
       return {
@@ -61,9 +57,7 @@ export const AuthProvider = ({ children }) => {
   const register = async (username, email, password, role = "USER") => {
     try {
       const response = await apiRegister(username, email, password, role);
-      setToken(response.token);
       setUser(response.user);
-      localStorage.setItem("token", response.token);
       return { success: true };
     } catch (error) {
       return {
@@ -73,17 +67,22 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem("token");
-    // Clear table cache on logout
-    localStorage.removeItem("library_tables_cache");
+  const logout = async () => {
+    try {
+      // Call backend to clear cookie
+      await apiLogout();
+    } catch (error) {
+      console.error("Logout error:", error);
+      // Continue with local logout even if API call fails
+    } finally {
+      setUser(null);
+      // Clear table cache on logout
+      localStorage.removeItem("library_tables_cache");
+    }
   };
 
   const value = {
     user,
-    token,
     login,
     register,
     logout,

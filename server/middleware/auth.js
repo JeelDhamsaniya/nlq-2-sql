@@ -1,14 +1,31 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || "your-secret-key-change-in-production";
+// CRITICAL: JWT_SECRET must be set in environment variables
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error("❌ FATAL ERROR: JWT_SECRET environment variable is not set!");
+  console.error(
+    "⚠️  Set JWT_SECRET in your .env file before starting the server"
+  );
+  process.exit(1); // Stop server if JWT_SECRET is missing
+}
 
 // Middleware to verify JWT token and attach user to request
 const authenticate = async (req, res, next) => {
   try {
-    // Get token from header
-    const token = req.header("Authorization")?.replace("Bearer ", "");
+    // Get token from SIGNED cookie (more secure)
+    let token = req.signedCookies?.token;
+
+    // Fallback to unsigned cookie for backward compatibility
+    if (!token) {
+      token = req.cookies?.token;
+    }
+
+    // Last resort: Authorization header (for backward compatibility during migration)
+    if (!token) {
+      token = req.header("Authorization")?.replace("Bearer ", "");
+    }
 
     if (!token) {
       return res.status(401).json({
